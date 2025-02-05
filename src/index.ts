@@ -280,6 +280,32 @@ type JackdArgs =
   | string[]
   | [jobId: number, priority?: number]
 
+/**
+ * Client options
+ */
+export type JackdProps = {
+  /** Whether to automatically connect to the server */
+  autoconnect?: boolean
+}
+
+/**
+ * Beanstalkd client
+ *
+ * ```ts
+ * import Jackd from "jackd"
+ *
+ * const client = new Jackd()
+ *
+ * await client.put("Hello!")
+ *
+ * // At a later time
+ * const { id, payload } = await client.reserve()
+ * console.log({ id, payload }) // => { id: '1', payload: 'Hello!' }
+ *
+ * // Process the job, then delete it
+ * await client.delete(id)
+ * ```
+ */
 export class JackdClient {
   socket: Socket = new Socket()
   connected: boolean = false
@@ -292,7 +318,7 @@ export class JackdClient {
   messages: Uint8Array[] = []
   executions: CommandExecution<unknown>[] = []
 
-  constructor() {
+  constructor({ autoconnect = true }: JackdProps = {}) {
     this.socket.on("ready", () => {
       this.connected = true
     })
@@ -311,6 +337,10 @@ export class JackdClient {
       this.buffer = newBuffer
       void this.processChunk(this.buffer)
     })
+
+    if (autoconnect) {
+      void this.connect()
+    }
   }
 
   async processChunk(head: Uint8Array) {
