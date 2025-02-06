@@ -24,16 +24,6 @@ export class CommandExecution<T> {
 }
 
 /**
- * Connection options for beanstalkd server
- */
-export interface JackdConnectOpts {
-  /** Hostname of beanstalkd server */
-  host: string
-  /** Port number, defaults to 11300 */
-  port?: number
-}
-
-/**
  * Options for putting a job into a tube
  */
 export interface JackdPutOpts {
@@ -286,6 +276,10 @@ type JackdArgs =
 export type JackdProps = {
   /** Whether to automatically connect to the server */
   autoconnect?: boolean
+  /** Hostname of beanstalkd server */
+  host?: string
+  /** Port number, defaults to 11300 */
+  port?: number
 }
 
 /**
@@ -307,10 +301,12 @@ export type JackdProps = {
  * ```
  */
 export class JackdClient {
-  socket: Socket = new Socket()
-  connected: boolean = false
-  buffer: Uint8Array = new Uint8Array()
-  chunkLength: number = 0
+  public socket: Socket = new Socket()
+  public connected: boolean = false
+  private buffer: Uint8Array = new Uint8Array()
+  private chunkLength: number = 0
+  private host: string
+  private port: number
 
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
@@ -318,13 +314,32 @@ export class JackdClient {
   messages: Uint8Array[] = []
   executions: CommandExecution<unknown>[] = []
 
-  constructor({ autoconnect = true }: JackdProps = {}) {
+  constructor({
+    autoconnect = true,
+    host = "localhost",
+    port = 11300
+  }: JackdProps = {}) {
+    this.host = host
+    this.port = port
+
+    this.setupSocketListeners()
+
+    if (autoconnect) {
+      void this.connect()
+    }
+  }
+
+  private setupSocketListeners() {
     this.socket.on("ready", () => {
       this.connected = true
     })
 
     this.socket.on("close", () => {
       this.connected = false
+    })
+
+    this.socket.on("error", (error: Error) => {
+      console.error("Socket error:", error.message)
     })
 
     // When we receive data from the socket, let's process it and put it in our
@@ -337,10 +352,6 @@ export class JackdClient {
       this.buffer = newBuffer
       void this.processChunk(this.buffer)
     })
-
-    if (autoconnect) {
-      void this.connect()
-    }
   }
 
   async processChunk(head: Uint8Array) {
@@ -428,28 +439,16 @@ export class JackdClient {
     return this.connected
   }
 
-  async connect(opts?: JackdConnectOpts): Promise<this> {
-    let host: string = "localhost"
-    let port = 11300
-
-    if (opts && opts.host) {
-      host = opts.host
-    }
-
-    if (opts && opts.port) {
-      port = opts.port
-    }
-
+  async connect(): Promise<this> {
     await new Promise<void>((resolve, reject) => {
       this.socket.once("error", (error: NodeJS.ErrnoException) => {
         if (error.code === "EISCONN") {
           return resolve()
         }
-
         reject(error)
       })
 
-      this.socket.connect(port, host, resolve)
+      this.socket.connect(this.port, this.host, resolve)
     })
 
     return this
@@ -463,9 +462,6 @@ export class JackdClient {
     })
   }
 
-  /**
-   * Closes the connection
-   */
   quit = async () => {
     if (!this.connected) return
 

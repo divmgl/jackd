@@ -1,7 +1,6 @@
 import Jackd from "."
 import crypto from "crypto"
-
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 
 describe("jackd", () => {
   let client: Jackd
@@ -314,10 +313,20 @@ describe("jackd", () => {
     })
 
     it("brings back list of watched tubes", async () => {
-      await client.watch("test-tube")
+      // First verify we start with just default
+      const initialTubes = await client.listTubesWatched()
+      expect(initialTubes).toContain("default")
+      expect(initialTubes.length).toBe(1)
+
+      // Watch should return the number of tubes being watched
+      const watchCount = await client.watch("test-tube")
+      expect(watchCount).toBe(2) // Should be watching 2 tubes now
+
+      // Now check the list
       const tubes = await client.listTubesWatched()
       expect(tubes).toContain("default")
       expect(tubes).toContain("test-tube")
+      expect(tubes.length).toBe(2)
       expect(Array.isArray(tubes)).toBe(true)
     })
 

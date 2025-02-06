@@ -14,15 +14,6 @@ export declare class CommandExecution<T> {
     emitter: EventEmitter;
 }
 /**
- * Connection options for beanstalkd server
- */
-export interface JackdConnectOpts {
-    /** Hostname of beanstalkd server */
-    host: string;
-    /** Port number, defaults to 11300 */
-    port?: number;
-}
-/**
  * Options for putting a job into a tube
  */
 export interface JackdPutOpts {
@@ -249,14 +240,46 @@ type JackdPauseTubeArgs = [tubeId: string, options?: JackdPauseTubeOpts];
 type JackdJobArgs = [jobId: number];
 type JackdTubeArgs = [tubeId: string];
 type JackdArgs = JackdPutArgs | JackdReleaseArgs | JackdPauseTubeArgs | JackdJobArgs | JackdTubeArgs | never[] | number[] | string[] | [jobId: number, priority?: number];
+/**
+ * Client options
+ */
+export type JackdProps = {
+    /** Whether to automatically connect to the server */
+    autoconnect?: boolean;
+    /** Hostname of beanstalkd server */
+    host?: string;
+    /** Port number, defaults to 11300 */
+    port?: number;
+};
+/**
+ * Beanstalkd client
+ *
+ * ```ts
+ * import Jackd from "jackd"
+ *
+ * const client = new Jackd()
+ *
+ * await client.put("Hello!")
+ *
+ * // At a later time
+ * const { id, payload } = await client.reserve()
+ * console.log({ id, payload }) // => { id: '1', payload: 'Hello!' }
+ *
+ * // Process the job, then delete it
+ * await client.delete(id)
+ * ```
+ */
 export declare class JackdClient {
     socket: Socket;
     connected: boolean;
-    buffer: Uint8Array;
-    chunkLength: number;
+    private buffer;
+    private chunkLength;
+    private host;
+    private port;
     messages: Uint8Array[];
     executions: CommandExecution<unknown>[];
-    constructor();
+    constructor({ autoconnect, host, port }?: JackdProps);
+    private setupSocketListeners;
     processChunk(head: Uint8Array): Promise<void>;
     flushExecutions(): Promise<void>;
     /**
@@ -264,11 +287,8 @@ export declare class JackdClient {
      * @returns {Boolean}
      */
     isConnected(): boolean;
-    connect(opts?: JackdConnectOpts): Promise<this>;
+    connect(): Promise<this>;
     write(buffer: Uint8Array): Promise<void>;
-    /**
-     * Closes the connection
-     */
     quit: () => Promise<void>;
     close: () => Promise<void>;
     disconnect: () => Promise<void>;

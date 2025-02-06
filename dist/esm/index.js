@@ -7421,17 +7421,34 @@ var JackdClient = class {
   connected = false;
   buffer = new Uint8Array();
   chunkLength = 0;
+  host;
+  port;
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
   // without needing to explicitly wait for promises.
   messages = [];
   executions = [];
-  constructor() {
+  constructor({
+    autoconnect = true,
+    host = "localhost",
+    port = 11300
+  } = {}) {
+    this.host = host;
+    this.port = port;
+    this.setupSocketListeners();
+    if (autoconnect) {
+      void this.connect();
+    }
+  }
+  setupSocketListeners() {
     this.socket.on("ready", () => {
       this.connected = true;
     });
     this.socket.on("close", () => {
       this.connected = false;
+    });
+    this.socket.on("error", (error) => {
+      console.error("Socket error:", error.message);
     });
     this.socket.on("data", (incoming) => {
       const newBuffer = new Uint8Array(this.buffer.length + incoming.length);
@@ -7494,15 +7511,7 @@ var JackdClient = class {
   isConnected() {
     return this.connected;
   }
-  async connect(opts) {
-    let host = "localhost";
-    let port = 11300;
-    if (opts && opts.host) {
-      host = opts.host;
-    }
-    if (opts && opts.port) {
-      port = opts.port;
-    }
+  async connect() {
     await new Promise((resolve, reject) => {
       this.socket.once("error", (error) => {
         if (error.code === "EISCONN") {
@@ -7510,7 +7519,7 @@ var JackdClient = class {
         }
         reject(error);
       });
-      this.socket.connect(port, host, resolve);
+      this.socket.connect(this.port, this.host, resolve);
     });
     return this;
   }
@@ -7520,9 +7529,6 @@ var JackdClient = class {
       this.socket.write(buffer, (err) => err ? reject(err) : resolve());
     });
   }
-  /**
-   * Closes the connection
-   */
   quit = async () => {
     if (!this.connected) return;
     const waitForClose = new Promise((resolve, reject) => {

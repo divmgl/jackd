@@ -11,7 +11,7 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    "types": ["node"],
+    "types": ["node", "bun-types"],
 
     // Best practices
     "strict": true,
