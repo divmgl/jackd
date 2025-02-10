@@ -1,6 +1,7 @@
 import esbuild from "esbuild"
+import { rename } from "fs/promises"
 
-// Then build bundles
+// Build bundles
 await Promise.all([
   esbuild.build({
     entryPoints: ["src/index.ts"],
@@ -19,3 +20,6 @@ await Promise.all([
     platform: "node"
   })
 ])
+
+// Rename the CommonJS output to .cjs
+await rename("dist/cjs/index.js", "dist/cjs/index.cjs")
