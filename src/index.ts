@@ -280,6 +280,14 @@ export type JackdProps = {
   host?: string
   /** Port number, defaults to 11300 */
   port?: number
+  /** Whether to automatically reconnect on connection loss */
+  autoReconnect?: boolean
+  /** Initial delay in ms between reconnection attempts */
+  initialReconnectDelay?: number
+  /** Maximum delay in ms between reconnection attempts */
+  maxReconnectDelay?: number
+  /** Maximum number of reconnection attempts (0 for infinite) */
+  maxReconnectAttempts?: number
 }
 
 /**
@@ -307,6 +315,14 @@ export class JackdClient {
   private chunkLength: number = 0
   private host: string
   private port: number
+  private autoReconnect: boolean
+  private initialReconnectDelay: number
+  private maxReconnectDelay: number
+  private maxReconnectAttempts: number
+  private reconnectAttempts: number = 0
+  private currentReconnectDelay: number
+  private reconnectTimeout?: ReturnType<typeof setTimeout>
+  private isReconnecting: boolean = false
 
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
@@ -317,10 +333,19 @@ export class JackdClient {
   constructor({
     autoconnect = true,
     host = "localhost",
-    port = 11300
+    port = 11300,
+    autoReconnect = true,
+    initialReconnectDelay = 1000,
+    maxReconnectDelay = 30000,
+    maxReconnectAttempts = 0
   }: JackdProps = {}) {
     this.host = host
     this.port = port
+    this.autoReconnect = autoReconnect
+    this.initialReconnectDelay = initialReconnectDelay
+    this.maxReconnectDelay = maxReconnectDelay
+    this.maxReconnectAttempts = maxReconnectAttempts
+    this.currentReconnectDelay = initialReconnectDelay
 
     this.setupSocketListeners()
 
@@ -332,10 +357,16 @@ export class JackdClient {
   private setupSocketListeners() {
     this.socket.on("ready", () => {
       this.connected = true
+      this.reconnectAttempts = 0
+      this.currentReconnectDelay = this.initialReconnectDelay
     })
 
     this.socket.on("close", () => {
       this.connected = false
+
+      if (this.autoReconnect && !this.isReconnecting) {
+        void this.attemptReconnect()
+      }
     })
 
     this.socket.on("error", (error: Error) => {
@@ -352,6 +383,51 @@ export class JackdClient {
       this.buffer = newBuffer
       void this.processChunk(this.buffer)
     })
+  }
+
+  private attemptReconnect() {
+    if (
+      this.maxReconnectAttempts > 0 &&
+      this.reconnectAttempts >= this.maxReconnectAttempts
+    ) {
+      console.error("Max reconnection attempts reached")
+      return
+    }
+
+    this.isReconnecting = true
+    this.reconnectAttempts++
+
+    // Clear any existing timeout
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout)
+    }
+
+    // Schedule reconnection attempt with exponential backoff
+    this.reconnectTimeout = setTimeout(() => {
+      void (async () => {
+        try {
+          // Create a new socket instance
+          this.socket.removeAllListeners()
+          this.socket = new Socket()
+          this.setupSocketListeners()
+
+          await this.connect()
+          this.isReconnecting = false
+        } catch (error) {
+          console.error("Reconnection failed:", error)
+
+          // Exponential backoff with max delay
+          this.currentReconnectDelay = Math.min(
+            this.currentReconnectDelay * 2,
+            this.maxReconnectDelay
+          )
+
+          // Try again
+          this.isReconnecting = false
+          void this.attemptReconnect()
+        }
+      })()
+    }, this.currentReconnectDelay)
   }
 
   async processChunk(head: Uint8Array) {
