@@ -7431,6 +7431,14 @@ var JackdClient = class {
   chunkLength = 0;
   host;
   port;
+  autoReconnect;
+  initialReconnectDelay;
+  maxReconnectDelay;
+  maxReconnectAttempts;
+  reconnectAttempts = 0;
+  currentReconnectDelay;
+  reconnectTimeout;
+  isReconnecting = false;
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
   // without needing to explicitly wait for promises.
@@ -7439,10 +7447,19 @@ var JackdClient = class {
   constructor({
     autoconnect = true,
     host = "localhost",
-    port = 11300
+    port = 11300,
+    autoReconnect = true,
+    initialReconnectDelay = 1e3,
+    maxReconnectDelay = 3e4,
+    maxReconnectAttempts = 0
   } = {}) {
     this.host = host;
     this.port = port;
+    this.autoReconnect = autoReconnect;
+    this.initialReconnectDelay = initialReconnectDelay;
+    this.maxReconnectDelay = maxReconnectDelay;
+    this.maxReconnectAttempts = maxReconnectAttempts;
+    this.currentReconnectDelay = initialReconnectDelay;
     this.setupSocketListeners();
     if (autoconnect) {
       void this.connect();
@@ -7451,9 +7468,14 @@ var JackdClient = class {
   setupSocketListeners() {
     this.socket.on("ready", () => {
       this.connected = true;
+      this.reconnectAttempts = 0;
+      this.currentReconnectDelay = this.initialReconnectDelay;
     });
     this.socket.on("close", () => {
       this.connected = false;
+      if (this.autoReconnect && !this.isReconnecting) {
+        void this.attemptReconnect();
+      }
     });
     this.socket.on("error", (error) => {
       console.error("Socket error:", error.message);
@@ -7465,6 +7487,36 @@ var JackdClient = class {
       this.buffer = newBuffer;
       void this.processChunk(this.buffer);
     });
+  }
+  attemptReconnect() {
+    if (this.maxReconnectAttempts > 0 && this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error("Max reconnection attempts reached");
+      return;
+    }
+    this.isReconnecting = true;
+    this.reconnectAttempts++;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+    }
+    this.reconnectTimeout = setTimeout(() => {
+      void (async () => {
+        try {
+          this.socket.removeAllListeners();
+          this.socket = new import_net.Socket();
+          this.setupSocketListeners();
+          await this.connect();
+          this.isReconnecting = false;
+        } catch (error) {
+          console.error("Reconnection failed:", error);
+          this.currentReconnectDelay = Math.min(
+            this.currentReconnectDelay * 2,
+            this.maxReconnectDelay
+          );
+          this.isReconnecting = false;
+          void this.attemptReconnect();
+        }
+      })();
+    }, this.currentReconnectDelay);
   }
   async processChunk(head) {
     let index = -1;

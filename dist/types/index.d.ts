@@ -250,6 +250,14 @@ export type JackdProps = {
     host?: string;
     /** Port number, defaults to 11300 */
     port?: number;
+    /** Whether to automatically reconnect on connection loss */
+    autoReconnect?: boolean;
+    /** Initial delay in ms between reconnection attempts */
+    initialReconnectDelay?: number;
+    /** Maximum delay in ms between reconnection attempts */
+    maxReconnectDelay?: number;
+    /** Maximum number of reconnection attempts (0 for infinite) */
+    maxReconnectAttempts?: number;
 };
 /**
  * Beanstalkd client
@@ -276,10 +284,19 @@ export declare class JackdClient {
     private chunkLength;
     private host;
     private port;
+    private autoReconnect;
+    private initialReconnectDelay;
+    private maxReconnectDelay;
+    private maxReconnectAttempts;
+    private reconnectAttempts;
+    private currentReconnectDelay;
+    private reconnectTimeout?;
+    private isReconnecting;
     messages: Uint8Array[];
     executions: CommandExecution<unknown>[];
-    constructor({ autoconnect, host, port }?: JackdProps);
+    constructor({ autoconnect, host, port, autoReconnect, initialReconnectDelay, maxReconnectDelay, maxReconnectAttempts }?: JackdProps);
     private setupSocketListeners;
+    private attemptReconnect;
     processChunk(head: Uint8Array): Promise<void>;
     flushExecutions(): Promise<void>;
     /**

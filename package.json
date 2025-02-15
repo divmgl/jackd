@@ -1,6 +1,6 @@
 {
   "name": "jackd",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "description": "Modern beanstalkd client for Node.js",
   "type": "module",
   "exports": {
