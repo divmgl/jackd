@@ -7999,7 +7999,7 @@ var JackdClient = class {
     },
     [
       (buffer) => {
-        const ascii = validate(buffer, [DEADLINE_SOON, TIMED_OUT]);
+        const ascii = validate(buffer, [NOT_FOUND]);
         if (ascii.startsWith(OK)) {
           const [, bytes] = ascii.split(" ");
           this.chunkLength = parseInt(bytes);
@@ -8034,7 +8034,7 @@ var JackdClient = class {
     },
     [
       (buffer) => {
-        const ascii = validate(buffer, [NOT_FOUND, DEADLINE_SOON, TIMED_OUT]);
+        const ascii = validate(buffer, [NOT_FOUND]);
         if (ascii.startsWith(OK)) {
           const [, bytes] = ascii.split(" ");
           this.chunkLength = parseInt(bytes);
@@ -8064,7 +8064,7 @@ var JackdClient = class {
 `),
     [
       (buffer) => {
-        const ascii = validate(buffer, [DEADLINE_SOON, TIMED_OUT]);
+        const ascii = validate(buffer);
         if (ascii.startsWith(OK)) {
           const [, bytes] = ascii.split(" ");
           this.chunkLength = parseInt(bytes);

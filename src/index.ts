@@ -980,7 +980,7 @@ export class JackdClient {
     },
     [
       (buffer: Uint8Array) => {
-        const ascii = validate(buffer, [DEADLINE_SOON, TIMED_OUT])
+        const ascii = validate(buffer, [NOT_FOUND])
 
         if (ascii.startsWith(OK)) {
           const [, bytes] = ascii.split(" ")
@@ -1017,7 +1017,7 @@ export class JackdClient {
     },
     [
       (buffer: Uint8Array) => {
-        const ascii = validate(buffer, [NOT_FOUND, DEADLINE_SOON, TIMED_OUT])
+        const ascii = validate(buffer, [NOT_FOUND])
 
         if (ascii.startsWith(OK)) {
           const [, bytes] = ascii.split(" ")
@@ -1049,7 +1049,7 @@ export class JackdClient {
     () => new TextEncoder().encode(`stats\r\n`),
     [
       (buffer: Uint8Array) => {
-        const ascii = validate(buffer, [DEADLINE_SOON, TIMED_OUT])
+        const ascii = validate(buffer)
 
         if (ascii.startsWith(OK)) {
           const [, bytes] = ascii.split(" ")
