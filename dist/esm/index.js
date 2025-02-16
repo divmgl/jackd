@@ -8170,7 +8170,6 @@ var InvalidResponseError = class extends Error {
   response = "internal error";
 };
 function invalidResponse(ascii) {
-  console.log(ascii);
   const error = new InvalidResponseError(`Unexpected response: ${ascii}`);
   error.response = ascii;
   throw error;

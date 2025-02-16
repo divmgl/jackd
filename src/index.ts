@@ -1187,7 +1187,6 @@ export class InvalidResponseError extends Error {
 }
 
 function invalidResponse(ascii: string) {
-  console.log(ascii)
   const error = new InvalidResponseError(`Unexpected response: ${ascii}`)
   error.response = ascii
   throw error
