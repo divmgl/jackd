@@ -291,6 +291,53 @@ export type JackdProps = {
 }
 
 /**
+ * Standardized error codes for Jackd operations
+ */
+export enum JackdErrorCode {
+  /** Server out of memory */
+  OUT_OF_MEMORY = "OUT_OF_MEMORY",
+  /** Internal server error */
+  INTERNAL_ERROR = "INTERNAL_ERROR",
+  /** Bad command format */
+  BAD_FORMAT = "BAD_FORMAT",
+  /** Unknown command */
+  UNKNOWN_COMMAND = "UNKNOWN_COMMAND",
+  /** Job body not properly terminated */
+  EXPECTED_CRLF = "EXPECTED_CRLF",
+  /** Job larger than max-job-size */
+  JOB_TOO_BIG = "JOB_TOO_BIG",
+  /** Server in drain mode */
+  DRAINING = "DRAINING",
+  /** Timeout exceeded with no job */
+  TIMED_OUT = "TIMED_OUT",
+  /** Reserved job TTR expiring */
+  DEADLINE_SOON = "DEADLINE_SOON",
+  /** Resource not found */
+  NOT_FOUND = "NOT_FOUND",
+  /** Cannot ignore only watched tube */
+  NOT_IGNORED = "NOT_IGNORED",
+  /** Unexpected server response */
+  INVALID_RESPONSE = "INVALID_RESPONSE"
+}
+
+/**
+ * Custom error class for Jackd operations
+ */
+export class JackdError extends Error {
+  /** Error code indicating the type of error */
+  code: JackdErrorCode
+  /** Raw response from server if available */
+  response?: string
+
+  constructor(code: JackdErrorCode, message?: string, response?: string) {
+    super(message || code)
+    this.code = code
+    this.response = response
+    this.name = "JackdError"
+  }
+}
+
+/**
  * Beanstalkd client
  *
  * ```ts
@@ -1173,23 +1220,22 @@ function validate(
   const ascii = new TextDecoder().decode(buffer)
   const errors = [OUT_OF_MEMORY, INTERNAL_ERROR, BAD_FORMAT, UNKNOWN_COMMAND]
 
-  if (
-    errors.concat(additionalResponses).some(error => ascii.startsWith(error))
-  ) {
-    throw new Error(ascii)
+  const errorCode = errors
+    .concat(additionalResponses)
+    .find(error => ascii.startsWith(error))
+  if (errorCode) {
+    throw new JackdError(errorCode as JackdErrorCode, ascii, ascii)
   }
 
   return ascii
 }
 
-export class InvalidResponseError extends Error {
-  response: string = "internal error"
-}
-
 function invalidResponse(ascii: string) {
-  const error = new InvalidResponseError(`Unexpected response: ${ascii}`)
-  error.response = ascii
-  throw error
+  throw new JackdError(
+    JackdErrorCode.INVALID_RESPONSE,
+    `Unexpected response: ${ascii}`,
+    ascii
+  )
 }
 
 // Helper function to find index of subarray

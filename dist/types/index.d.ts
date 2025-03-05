@@ -260,6 +260,45 @@ export type JackdProps = {
     maxReconnectAttempts?: number;
 };
 /**
+ * Standardized error codes for Jackd operations
+ */
+export declare enum JackdErrorCode {
+    /** Server out of memory */
+    OUT_OF_MEMORY = "OUT_OF_MEMORY",
+    /** Internal server error */
+    INTERNAL_ERROR = "INTERNAL_ERROR",
+    /** Bad command format */
+    BAD_FORMAT = "BAD_FORMAT",
+    /** Unknown command */
+    UNKNOWN_COMMAND = "UNKNOWN_COMMAND",
+    /** Job body not properly terminated */
+    EXPECTED_CRLF = "EXPECTED_CRLF",
+    /** Job larger than max-job-size */
+    JOB_TOO_BIG = "JOB_TOO_BIG",
+    /** Server in drain mode */
+    DRAINING = "DRAINING",
+    /** Timeout exceeded with no job */
+    TIMED_OUT = "TIMED_OUT",
+    /** Reserved job TTR expiring */
+    DEADLINE_SOON = "DEADLINE_SOON",
+    /** Resource not found */
+    NOT_FOUND = "NOT_FOUND",
+    /** Cannot ignore only watched tube */
+    NOT_IGNORED = "NOT_IGNORED",
+    /** Unexpected server response */
+    INVALID_RESPONSE = "INVALID_RESPONSE"
+}
+/**
+ * Custom error class for Jackd operations
+ */
+export declare class JackdError extends Error {
+    /** Error code indicating the type of error */
+    code: JackdErrorCode;
+    /** Raw response from server if available */
+    response?: string;
+    constructor(code: JackdErrorCode, message?: string, response?: string);
+}
+/**
  * Beanstalkd client
  *
  * ```ts
@@ -478,6 +517,3 @@ export declare class JackdClient {
     createCommandHandler<TArgs extends JackdArgs, TReturn>(commandStringFunction: (...args: TArgs) => Uint8Array, handlers: CommandHandler<TReturn | void>[]): (...args: TArgs) => Promise<TReturn>;
 }
 export default JackdClient;
-export declare class InvalidResponseError extends Error {
-    response: string;
-}

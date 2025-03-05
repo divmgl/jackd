@@ -1,4 +1,4 @@
-import Jackd from "."
+import Jackd, { JackdError, JackdErrorCode } from "./index"
 import crypto from "crypto"
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 
@@ -132,12 +132,15 @@ describe("jackd", () => {
     })
 
     it("handles not found", async () => {
+      let error: unknown
       try {
         await client.reserveJob(4)
       } catch (err) {
-        expect(err).toBeInstanceOf(Error)
-        expect((err as Error).message).toEqual("NOT_FOUND")
+        error = err
       }
+      expect(error).toBeInstanceOf(JackdError)
+      const jackdError = error as JackdError
+      expect(jackdError.code).toBe(JackdErrorCode.NOT_FOUND)
     })
 
     it("can insert and process jobs on a different tube", async () => {
@@ -359,14 +362,18 @@ describe("jackd", () => {
 
     it("can continue execution after bad command", async () => {
       let id
+      let error: unknown
 
       try {
         // Bad command
         // @ts-expect-error We're testing the error handling
         await client.delete("nonexistent job")
       } catch (err) {
-        expect(err).toBeInstanceOf(Error)
+        error = err
       }
+      expect(error).toBeInstanceOf(JackdError)
+      const jackdError = error as JackdError
+      expect(jackdError.code).toBe(JackdErrorCode.BAD_FORMAT)
 
       try {
         id = await client.put("my awesome job")

@@ -7416,6 +7416,33 @@ var CommandExecution = class {
   /** Event emitter for command completion */
   emitter = new EventEmitter();
 };
+var JackdErrorCode = /* @__PURE__ */ ((JackdErrorCode2) => {
+  JackdErrorCode2["OUT_OF_MEMORY"] = "OUT_OF_MEMORY";
+  JackdErrorCode2["INTERNAL_ERROR"] = "INTERNAL_ERROR";
+  JackdErrorCode2["BAD_FORMAT"] = "BAD_FORMAT";
+  JackdErrorCode2["UNKNOWN_COMMAND"] = "UNKNOWN_COMMAND";
+  JackdErrorCode2["EXPECTED_CRLF"] = "EXPECTED_CRLF";
+  JackdErrorCode2["JOB_TOO_BIG"] = "JOB_TOO_BIG";
+  JackdErrorCode2["DRAINING"] = "DRAINING";
+  JackdErrorCode2["TIMED_OUT"] = "TIMED_OUT";
+  JackdErrorCode2["DEADLINE_SOON"] = "DEADLINE_SOON";
+  JackdErrorCode2["NOT_FOUND"] = "NOT_FOUND";
+  JackdErrorCode2["NOT_IGNORED"] = "NOT_IGNORED";
+  JackdErrorCode2["INVALID_RESPONSE"] = "INVALID_RESPONSE";
+  return JackdErrorCode2;
+})(JackdErrorCode || {});
+var JackdError = class extends Error {
+  /** Error code indicating the type of error */
+  code;
+  /** Raw response from server if available */
+  response;
+  constructor(code, message, response) {
+    super(message || code);
+    this.code = code;
+    this.response = response;
+    this.name = "JackdError";
+  }
+};
 var JackdClient = class {
   socket = new Socket();
   connected = false;
@@ -8161,18 +8188,18 @@ var index_default = JackdClient;
 function validate(buffer, additionalResponses = []) {
   const ascii = new TextDecoder().decode(buffer);
   const errors = [OUT_OF_MEMORY, INTERNAL_ERROR, BAD_FORMAT, UNKNOWN_COMMAND];
-  if (errors.concat(additionalResponses).some((error) => ascii.startsWith(error))) {
-    throw new Error(ascii);
+  const errorCode = errors.concat(additionalResponses).find((error) => ascii.startsWith(error));
+  if (errorCode) {
+    throw new JackdError(errorCode, ascii, ascii);
   }
   return ascii;
 }
-var InvalidResponseError = class extends Error {
-  response = "internal error";
-};
 function invalidResponse(ascii) {
-  const error = new InvalidResponseError(`Unexpected response: ${ascii}`);
-  error.response = ascii;
-  throw error;
+  throw new JackdError(
+    "INVALID_RESPONSE" /* INVALID_RESPONSE */,
+    `Unexpected response: ${ascii}`,
+    ascii
+  );
 }
 function findIndex(array, subarray) {
   for (let i = 0; i <= array.length - subarray.length; i++) {
@@ -8212,7 +8239,8 @@ var PAUSED = "PAUSED";
 var OK = "OK";
 export {
   CommandExecution,
-  InvalidResponseError,
   JackdClient,
+  JackdError,
+  JackdErrorCode,
   index_default as default
 };
