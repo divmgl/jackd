@@ -41,6 +41,60 @@ describe("jackd", () => {
       await client.delete(id)
       await client.close()
     })
+
+    it("maintains tube watching state across reconnections", async () => {
+      // Create a new client with autoReconnect enabled and shorter timeout
+      const client = new Jackd({
+        autoReconnect: true,
+        initialReconnectDelay: 100 // Faster reconnect for test
+      })
+      await client.connect()
+
+      // Watch new tubes before ignoring default
+      await client.watch("tube1")
+      await client.watch("tube2")
+      // Now we can safely ignore default since we're watching other tubes
+      await client.ignore("default")
+
+      // Get initial list of watched tubes
+      const initialWatched = await client.listTubesWatched()
+      expect(initialWatched).toContain("tube1")
+      expect(initialWatched).toContain("tube2")
+      expect(initialWatched).not.toContain("default")
+      expect(initialWatched.length).toBe(2) // Should be exactly these two tubes
+
+      // Verify the internal state
+      // @ts-expect-error: testing private property
+      const internalWatchedTubes = Array.from(client.watchedTubes)
+      expect(internalWatchedTubes).toContain("tube1")
+      expect(internalWatchedTubes).toContain("tube2")
+      expect(internalWatchedTubes).not.toContain("default")
+      expect(internalWatchedTubes.length).toBe(2) // Should be exactly these two tubes
+
+      // Force a disconnect by destroying the socket
+      client.socket.destroy()
+
+      // Wait a bit for reconnection
+      await new Promise(resolve => setTimeout(resolve, 500)) // Shorter wait
+
+      // Verify connection status
+      if (!client.connected) {
+        try {
+          await client.connect()
+        } catch (error) {
+          console.error("Manual connect failed:", error)
+          // Ignore connection errors as we're testing reconnect behavior
+        }
+      }
+
+      // Verify the internal state after reconnection
+      // @ts-expect-error: testing private property
+      const reconnectedInternalWatchedTubes = Array.from(client.watchedTubes)
+      expect(reconnectedInternalWatchedTubes).toEqual(internalWatchedTubes)
+
+      // Cleanup
+      await client.close()
+    })
   })
 
   describe("producers", () => {

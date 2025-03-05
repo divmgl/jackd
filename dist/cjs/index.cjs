@@ -7475,6 +7475,8 @@ var JackdClient = class {
   isReconnecting = false;
   commandTimeout = 1e4;
   // 10 second timeout for commands
+  watchedTubes = /* @__PURE__ */ new Set(["default"]);
+  // Track watched tubes, default is always watched initially
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
   // without needing to explicitly wait for promises.
@@ -7506,6 +7508,7 @@ var JackdClient = class {
       this.connected = true;
       this.reconnectAttempts = 0;
       this.currentReconnectDelay = this.initialReconnectDelay;
+      void this.rewatchTubes();
     });
     this.socket.on("close", () => {
       if (this.connected) {
@@ -7551,7 +7554,6 @@ var JackdClient = class {
   }
   attemptReconnect() {
     if (this.maxReconnectAttempts > 0 && this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error("Max reconnection attempts reached");
       return;
     }
     this.isReconnecting = true;
@@ -7563,8 +7565,11 @@ var JackdClient = class {
       void (async () => {
         try {
           this.socket.removeAllListeners();
+          this.socket.destroy();
           this.socket = new import_net.Socket();
           this.socket.setKeepAlive(true);
+          this.buffer = new Uint8Array();
+          this.chunkLength = 0;
           this.setupSocketListeners();
           await this.connect();
           this.isReconnecting = false;
@@ -7611,7 +7616,8 @@ var JackdClient = class {
       try {
         while (handlers.length && this.messages.length) {
           const handler = handlers.shift();
-          const result = await handler(this.messages.shift());
+          const message = this.messages.shift();
+          const result = await handler(message);
           if (handlers.length === 0) {
             emitter.emit("resolve", result);
             this.executions.shift();
@@ -7635,13 +7641,26 @@ var JackdClient = class {
   }
   async connect() {
     await new Promise((resolve, reject) => {
-      this.socket.once("error", (error) => {
+      const timeoutId = setTimeout(() => {
+        this.socket.removeListener("error", onError);
+        reject(new Error("Connection timeout"));
+      }, this.commandTimeout);
+      const onError = (error) => {
+        clearTimeout(timeoutId);
         if (error.code === "EISCONN") {
           return resolve();
         }
         reject(error);
+      };
+      this.socket.once("error", onError);
+      this.socket.once("ready", () => {
+        clearTimeout(timeoutId);
+        resolve();
       });
-      this.socket.connect(this.port, this.host, resolve);
+      this.socket.connect(this.port, this.host, () => {
+        clearTimeout(timeoutId);
+        resolve();
+      });
     });
     return this;
   }
@@ -7929,6 +7948,7 @@ var JackdClient = class {
   watch = this.createCommandHandler(
     (tube) => {
       (0, import_assert.default)(tube);
+      this.watchedTubes.add(tube);
       return new TextEncoder().encode(`watch ${tube}\r
 `);
     },
@@ -7952,6 +7972,7 @@ var JackdClient = class {
   ignore = this.createCommandHandler(
     (tube) => {
       (0, import_assert.default)(tube);
+      this.watchedTubes.delete(tube);
       return new TextEncoder().encode(`ignore ${tube}\r
 `);
     },
@@ -8250,6 +8271,20 @@ var JackdClient = class {
       }
     ]
   );
+  /**
+   * Rewatches all previously watched tubes after a reconnection
+   * If default is not in the watched tubes list, ignores it
+   */
+  async rewatchTubes() {
+    for (const tube of this.watchedTubes) {
+      if (tube !== "default") {
+        await this.watch(tube);
+      }
+    }
+    if (!this.watchedTubes.has("default")) {
+      await this.ignore("default");
+    }
+  }
   createCommandHandler(commandStringFunction, handlers) {
     return async (...args) => {
       const commandString = commandStringFunction.apply(this, args);

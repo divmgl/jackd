@@ -379,6 +379,7 @@ export class JackdClient {
   private reconnectTimeout?: ReturnType<typeof setTimeout>
   private isReconnecting: boolean = false
   private commandTimeout: number = 10000 // 10 second timeout for commands
+  private watchedTubes: Set<string> = new Set(["default"]) // Track watched tubes, default is always watched initially
 
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
@@ -415,6 +416,7 @@ export class JackdClient {
       this.connected = true
       this.reconnectAttempts = 0
       this.currentReconnectDelay = this.initialReconnectDelay
+      void this.rewatchTubes() // Rewatch tubes after reconnection
     })
 
     this.socket.on("close", () => {
@@ -433,6 +435,7 @@ export class JackdClient {
 
     this.socket.on("error", (error: Error) => {
       console.error("Socket error:", error.message)
+
       if (this.connected) {
         this.handleDisconnect()
       }
@@ -479,7 +482,6 @@ export class JackdClient {
       this.maxReconnectAttempts > 0 &&
       this.reconnectAttempts >= this.maxReconnectAttempts
     ) {
-      console.error("Max reconnection attempts reached")
       return
     }
 
@@ -495,10 +497,19 @@ export class JackdClient {
     this.reconnectTimeout = setTimeout(() => {
       void (async () => {
         try {
-          // Create a new socket instance
+          // Clean up existing socket
           this.socket.removeAllListeners()
+          this.socket.destroy()
+
+          // Create a new socket instance
           this.socket = new Socket()
           this.socket.setKeepAlive(true)
+
+          // Reset connection-related state
+          this.buffer = new Uint8Array()
+          this.chunkLength = 0
+
+          // Set up socket listeners before connecting
           this.setupSocketListeners()
 
           await this.connect()
@@ -574,8 +585,9 @@ export class JackdClient {
         // data chunks after the initial response.
         while (handlers.length && this.messages.length) {
           const handler = handlers.shift()
+          const message = this.messages.shift()!
 
-          const result = await handler!(this.messages.shift()!)
+          const result = await handler!(message)
 
           if (handlers.length === 0) {
             emitter.emit("resolve", result)
@@ -607,14 +619,32 @@ export class JackdClient {
 
   async connect(): Promise<this> {
     await new Promise<void>((resolve, reject) => {
-      this.socket.once("error", (error: NodeJS.ErrnoException) => {
+      // Add a timeout to prevent hanging
+      const timeoutId = setTimeout(() => {
+        this.socket.removeListener("error", onError)
+        reject(new Error("Connection timeout"))
+      }, this.commandTimeout)
+
+      const onError = (error: NodeJS.ErrnoException) => {
+        clearTimeout(timeoutId)
         if (error.code === "EISCONN") {
           return resolve()
         }
         reject(error)
+      }
+
+      this.socket.once("error", onError)
+
+      // Use once('ready') as an alternative way to detect successful connection
+      this.socket.once("ready", () => {
+        clearTimeout(timeoutId)
+        resolve()
       })
 
-      this.socket.connect(this.port, this.host, resolve)
+      this.socket.connect(this.port, this.host, () => {
+        clearTimeout(timeoutId)
+        resolve()
+      })
     })
 
     return this
@@ -944,12 +974,13 @@ export class JackdClient {
    * @returns Number of tubes now being watched
    */
   watch = this.createCommandHandler<JackdTubeArgs, number>(
-    tube => {
+    (tube: string) => {
       assert(tube)
+      this.watchedTubes.add(tube) // Add tube to watched set when command is created
       return new TextEncoder().encode(`watch ${tube}\r\n`)
     },
     [
-      buffer => {
+      (buffer: Uint8Array) => {
         const ascii = validate(buffer)
 
         if (ascii.startsWith(WATCHING)) {
@@ -969,12 +1000,13 @@ export class JackdClient {
    * @throws {Error} NOT_IGNORED if trying to ignore only watched tube
    */
   ignore = this.createCommandHandler<JackdTubeArgs, number>(
-    tube => {
+    (tube: string) => {
       assert(tube)
+      this.watchedTubes.delete(tube) // Remove tube from watched set when command is created
       return new TextEncoder().encode(`ignore ${tube}\r\n`)
     },
     [
-      buffer => {
+      (buffer: Uint8Array) => {
         const ascii = validate(buffer, [NOT_IGNORED])
 
         if (ascii.startsWith(WATCHING)) {
@@ -1286,6 +1318,24 @@ export class JackdClient {
       }
     ]
   )
+
+  /**
+   * Rewatches all previously watched tubes after a reconnection
+   * If default is not in the watched tubes list, ignores it
+   */
+  private async rewatchTubes() {
+    // Watch all tubes in our set (except default) first
+    for (const tube of this.watchedTubes) {
+      if (tube !== "default") {
+        await this.watch(tube)
+      }
+    }
+
+    // Only after watching other tubes, ignore default if it's not in our watched set
+    if (!this.watchedTubes.has("default")) {
+      await this.ignore("default")
+    }
+  }
 
   createCommandHandler<TArgs extends JackdArgs, TReturn>(
     commandStringFunction: (...args: TArgs) => Uint8Array,
