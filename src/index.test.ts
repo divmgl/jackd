@@ -22,6 +22,25 @@ describe("jackd", () => {
       await client.disconnect()
       expect(client.connected).toBeFalsy()
     })
+
+    it("queues commands when not connected and executes them on connect", async () => {
+      const client = new Jackd({ autoconnect: false })
+      expect(client.connected).toBeFalsy()
+
+      // Queue up a command
+      const putPromise = client.put("test message")
+
+      // Connect after queueing
+      await client.connect()
+
+      // Command should complete and return job id
+      const id = await putPromise
+      expect(id).toBeDefined()
+
+      // Cleanup
+      await client.delete(id)
+      await client.close()
+    })
   })
 
   describe("producers", () => {

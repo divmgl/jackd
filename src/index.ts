@@ -319,7 +319,9 @@ export enum JackdErrorCode {
   /** Unexpected server response */
   INVALID_RESPONSE = "INVALID_RESPONSE",
   /** Socket is not connected */
-  NOT_CONNECTED = "NOT_CONNECTED"
+  NOT_CONNECTED = "NOT_CONNECTED",
+  /** Fatal connection error */
+  FATAL_CONNECTION_ERROR = "FATAL_CONNECTION_ERROR"
 }
 
 /**
@@ -376,6 +378,7 @@ export class JackdClient {
   private currentReconnectDelay: number
   private reconnectTimeout?: ReturnType<typeof setTimeout>
   private isReconnecting: boolean = false
+  private commandTimeout: number = 10000 // 10 second timeout for commands
 
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
@@ -620,16 +623,65 @@ export class JackdClient {
   write(buffer: Uint8Array) {
     assert(buffer)
 
-    if (!this.connected) {
-      throw new JackdError(
-        JackdErrorCode.NOT_CONNECTED,
-        "Socket is not connected"
-      )
+    return new Promise<void>((resolve, reject) => {
+      const tryWrite = () => {
+        if (this.connected) {
+          this.socket.write(buffer, err => (err ? reject(err) : resolve()))
+          return
+        }
+
+        // If not connected and not already reconnecting, trigger reconnect
+        if (!this.isReconnecting && this.autoReconnect) {
+          void this.attemptReconnect()
+        }
+
+        // Set a timeout for the command
+        const timeoutId = setTimeout(() => {
+          const error = new JackdError(
+            JackdErrorCode.FATAL_CONNECTION_ERROR,
+            "Connection timeout - could not establish connection within timeout period"
+          )
+          error.stack = new Error().stack // Preserve the call stack
+          reject(error)
+
+          // Force all other commands to fail
+          this.handleFatalError(error)
+        }, this.commandTimeout)
+
+        // Wait for connection or timeout
+        this.socket.once("ready", () => {
+          clearTimeout(timeoutId)
+          this.socket.write(buffer, err => (err ? reject(err) : resolve()))
+        })
+      }
+
+      void tryWrite()
+    })
+  }
+
+  private handleFatalError(error: JackdError) {
+    // Reject all pending executions
+    while (this.executions.length > 0) {
+      const execution = this.executions.shift()
+      if (execution) {
+        execution.emitter.emit("reject", error)
+      }
     }
 
-    return new Promise<void>((resolve, reject) => {
-      this.socket.write(buffer, err => (err ? reject(err) : resolve()))
-    })
+    // Clear state
+    this.messages = []
+    this.buffer = new Uint8Array()
+    this.chunkLength = 0
+    this.connected = false
+    this.autoReconnect = false // Disable reconnection attempts
+
+    // Destroy the socket
+    this.socket.destroy()
+
+    // Throw the error asynchronously to crash the process
+    setTimeout(() => {
+      throw error
+    }, 0)
   }
 
   quit = async () => {

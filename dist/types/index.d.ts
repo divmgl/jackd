@@ -288,7 +288,9 @@ export declare enum JackdErrorCode {
     /** Unexpected server response */
     INVALID_RESPONSE = "INVALID_RESPONSE",
     /** Socket is not connected */
-    NOT_CONNECTED = "NOT_CONNECTED"
+    NOT_CONNECTED = "NOT_CONNECTED",
+    /** Fatal connection error */
+    FATAL_CONNECTION_ERROR = "FATAL_CONNECTION_ERROR"
 }
 /**
  * Custom error class for Jackd operations
@@ -333,6 +335,7 @@ export declare class JackdClient {
     private currentReconnectDelay;
     private reconnectTimeout?;
     private isReconnecting;
+    private commandTimeout;
     messages: Uint8Array[];
     executions: CommandExecution<unknown>[];
     constructor({ autoconnect, host, port, autoReconnect, initialReconnectDelay, maxReconnectDelay, maxReconnectAttempts }?: JackdProps);
@@ -348,6 +351,7 @@ export declare class JackdClient {
     isConnected(): boolean;
     connect(): Promise<this>;
     write(buffer: Uint8Array): Promise<void>;
+    private handleFatalError;
     quit: () => Promise<void>;
     close: () => Promise<void>;
     disconnect: () => Promise<void>;

@@ -7439,6 +7439,7 @@ var JackdErrorCode = /* @__PURE__ */ ((JackdErrorCode2) => {
   JackdErrorCode2["NOT_IGNORED"] = "NOT_IGNORED";
   JackdErrorCode2["INVALID_RESPONSE"] = "INVALID_RESPONSE";
   JackdErrorCode2["NOT_CONNECTED"] = "NOT_CONNECTED";
+  JackdErrorCode2["FATAL_CONNECTION_ERROR"] = "FATAL_CONNECTION_ERROR";
   return JackdErrorCode2;
 })(JackdErrorCode || {});
 var JackdError = class extends Error {
@@ -7472,6 +7473,8 @@ var JackdClient = class {
   currentReconnectDelay;
   reconnectTimeout;
   isReconnecting = false;
+  commandTimeout = 1e4;
+  // 10 second timeout for commands
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
   // without needing to explicitly wait for promises.
@@ -7644,15 +7647,48 @@ var JackdClient = class {
   }
   write(buffer) {
     (0, import_assert.default)(buffer);
-    if (!this.connected) {
-      throw new JackdError(
-        "NOT_CONNECTED" /* NOT_CONNECTED */,
-        "Socket is not connected"
-      );
-    }
     return new Promise((resolve, reject) => {
-      this.socket.write(buffer, (err) => err ? reject(err) : resolve());
+      const tryWrite = () => {
+        if (this.connected) {
+          this.socket.write(buffer, (err) => err ? reject(err) : resolve());
+          return;
+        }
+        if (!this.isReconnecting && this.autoReconnect) {
+          void this.attemptReconnect();
+        }
+        const timeoutId = setTimeout(() => {
+          const error = new JackdError(
+            "FATAL_CONNECTION_ERROR" /* FATAL_CONNECTION_ERROR */,
+            "Connection timeout - could not establish connection within timeout period"
+          );
+          error.stack = new Error().stack;
+          reject(error);
+          this.handleFatalError(error);
+        }, this.commandTimeout);
+        this.socket.once("ready", () => {
+          clearTimeout(timeoutId);
+          this.socket.write(buffer, (err) => err ? reject(err) : resolve());
+        });
+      };
+      void tryWrite();
     });
+  }
+  handleFatalError(error) {
+    while (this.executions.length > 0) {
+      const execution = this.executions.shift();
+      if (execution) {
+        execution.emitter.emit("reject", error);
+      }
+    }
+    this.messages = [];
+    this.buffer = new Uint8Array();
+    this.chunkLength = 0;
+    this.connected = false;
+    this.autoReconnect = false;
+    this.socket.destroy();
+    setTimeout(() => {
+      throw error;
+    }, 0);
   }
   quit = async () => {
     if (!this.connected) return;
