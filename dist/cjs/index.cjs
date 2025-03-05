@@ -7438,6 +7438,7 @@ var JackdErrorCode = /* @__PURE__ */ ((JackdErrorCode2) => {
   JackdErrorCode2["NOT_FOUND"] = "NOT_FOUND";
   JackdErrorCode2["NOT_IGNORED"] = "NOT_IGNORED";
   JackdErrorCode2["INVALID_RESPONSE"] = "INVALID_RESPONSE";
+  JackdErrorCode2["NOT_CONNECTED"] = "NOT_CONNECTED";
   return JackdErrorCode2;
 })(JackdErrorCode || {});
 var JackdError = class extends Error {
@@ -7453,7 +7454,11 @@ var JackdError = class extends Error {
   }
 };
 var JackdClient = class {
-  socket = new import_net.Socket();
+  socket = (() => {
+    const socket = new import_net.Socket();
+    socket.setKeepAlive(true);
+    return socket;
+  })();
   connected = false;
   buffer = new Uint8Array();
   chunkLength = 0;
@@ -7500,13 +7505,20 @@ var JackdClient = class {
       this.currentReconnectDelay = this.initialReconnectDelay;
     });
     this.socket.on("close", () => {
-      this.connected = false;
-      if (this.autoReconnect && !this.isReconnecting) {
-        void this.attemptReconnect();
+      if (this.connected) {
+        this.handleDisconnect();
+      }
+    });
+    this.socket.on("end", () => {
+      if (this.connected) {
+        this.handleDisconnect();
       }
     });
     this.socket.on("error", (error) => {
       console.error("Socket error:", error.message);
+      if (this.connected) {
+        this.handleDisconnect();
+      }
     });
     this.socket.on("data", (incoming) => {
       const newBuffer = new Uint8Array(this.buffer.length + incoming.length);
@@ -7515,6 +7527,24 @@ var JackdClient = class {
       this.buffer = newBuffer;
       void this.processChunk(this.buffer);
     });
+  }
+  handleDisconnect() {
+    this.connected = false;
+    while (this.executions.length > 0) {
+      const execution = this.executions.shift();
+      if (execution) {
+        execution.emitter.emit(
+          "reject",
+          new JackdError("NOT_CONNECTED" /* NOT_CONNECTED */, "Connection lost")
+        );
+      }
+    }
+    this.messages = [];
+    this.buffer = new Uint8Array();
+    this.chunkLength = 0;
+    if (this.autoReconnect && !this.isReconnecting) {
+      void this.attemptReconnect();
+    }
   }
   attemptReconnect() {
     if (this.maxReconnectAttempts > 0 && this.reconnectAttempts >= this.maxReconnectAttempts) {
@@ -7531,6 +7561,7 @@ var JackdClient = class {
         try {
           this.socket.removeAllListeners();
           this.socket = new import_net.Socket();
+          this.socket.setKeepAlive(true);
           this.setupSocketListeners();
           await this.connect();
           this.isReconnecting = false;
@@ -7613,6 +7644,12 @@ var JackdClient = class {
   }
   write(buffer) {
     (0, import_assert.default)(buffer);
+    if (!this.connected) {
+      throw new JackdError(
+        "NOT_CONNECTED" /* NOT_CONNECTED */,
+        "Socket is not connected"
+      );
+    }
     return new Promise((resolve, reject) => {
       this.socket.write(buffer, (err) => err ? reject(err) : resolve());
     });

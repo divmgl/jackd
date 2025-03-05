@@ -317,7 +317,9 @@ export enum JackdErrorCode {
   /** Cannot ignore only watched tube */
   NOT_IGNORED = "NOT_IGNORED",
   /** Unexpected server response */
-  INVALID_RESPONSE = "INVALID_RESPONSE"
+  INVALID_RESPONSE = "INVALID_RESPONSE",
+  /** Socket is not connected */
+  NOT_CONNECTED = "NOT_CONNECTED"
 }
 
 /**
@@ -356,7 +358,11 @@ export class JackdError extends Error {
  * ```
  */
 export class JackdClient {
-  public socket: Socket = new Socket()
+  public socket: Socket = (() => {
+    const socket = new Socket()
+    socket.setKeepAlive(true)
+    return socket
+  })()
   public connected: boolean = false
   private buffer: Uint8Array = new Uint8Array()
   private chunkLength: number = 0
@@ -409,15 +415,24 @@ export class JackdClient {
     })
 
     this.socket.on("close", () => {
-      this.connected = false
+      if (this.connected) {
+        // Only handle disconnection if we were previously connected
+        this.handleDisconnect()
+      }
+    })
 
-      if (this.autoReconnect && !this.isReconnecting) {
-        void this.attemptReconnect()
+    this.socket.on("end", () => {
+      // Remote peer closed the connection
+      if (this.connected) {
+        this.handleDisconnect()
       }
     })
 
     this.socket.on("error", (error: Error) => {
       console.error("Socket error:", error.message)
+      if (this.connected) {
+        this.handleDisconnect()
+      }
     })
 
     // When we receive data from the socket, let's process it and put it in our
@@ -430,6 +445,30 @@ export class JackdClient {
       this.buffer = newBuffer
       void this.processChunk(this.buffer)
     })
+  }
+
+  private handleDisconnect() {
+    this.connected = false
+
+    // Reject any pending executions
+    while (this.executions.length > 0) {
+      const execution = this.executions.shift()
+      if (execution) {
+        execution.emitter.emit(
+          "reject",
+          new JackdError(JackdErrorCode.NOT_CONNECTED, "Connection lost")
+        )
+      }
+    }
+
+    // Clear any buffered messages
+    this.messages = []
+    this.buffer = new Uint8Array()
+    this.chunkLength = 0
+
+    if (this.autoReconnect && !this.isReconnecting) {
+      void this.attemptReconnect()
+    }
   }
 
   private attemptReconnect() {
@@ -456,6 +495,7 @@ export class JackdClient {
           // Create a new socket instance
           this.socket.removeAllListeners()
           this.socket = new Socket()
+          this.socket.setKeepAlive(true)
           this.setupSocketListeners()
 
           await this.connect()
@@ -579,6 +619,13 @@ export class JackdClient {
 
   write(buffer: Uint8Array) {
     assert(buffer)
+
+    if (!this.connected) {
+      throw new JackdError(
+        JackdErrorCode.NOT_CONNECTED,
+        "Socket is not connected"
+      )
+    }
 
     return new Promise<void>((resolve, reject) => {
       this.socket.write(buffer, err => (err ? reject(err) : resolve()))

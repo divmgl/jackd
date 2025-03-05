@@ -286,7 +286,9 @@ export declare enum JackdErrorCode {
     /** Cannot ignore only watched tube */
     NOT_IGNORED = "NOT_IGNORED",
     /** Unexpected server response */
-    INVALID_RESPONSE = "INVALID_RESPONSE"
+    INVALID_RESPONSE = "INVALID_RESPONSE",
+    /** Socket is not connected */
+    NOT_CONNECTED = "NOT_CONNECTED"
 }
 /**
  * Custom error class for Jackd operations
@@ -335,6 +337,7 @@ export declare class JackdClient {
     executions: CommandExecution<unknown>[];
     constructor({ autoconnect, host, port, autoReconnect, initialReconnectDelay, maxReconnectDelay, maxReconnectAttempts }?: JackdProps);
     private setupSocketListeners;
+    private handleDisconnect;
     private attemptReconnect;
     processChunk(head: Uint8Array): Promise<void>;
     flushExecutions(): Promise<void>;
