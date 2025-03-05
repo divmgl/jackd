@@ -7468,6 +7468,8 @@ var JackdClient = class {
   // 10 second timeout for commands
   watchedTubes = /* @__PURE__ */ new Set(["default"]);
   // Track watched tubes, default is always watched initially
+  currentTube = "default";
+  // Track currently used tube
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
   // without needing to explicitly wait for promises.
@@ -7500,6 +7502,7 @@ var JackdClient = class {
       this.reconnectAttempts = 0;
       this.currentReconnectDelay = this.initialReconnectDelay;
       void this.rewatchTubes();
+      void this.reuseTube();
     });
     this.socket.on("close", () => {
       if (this.connected) {
@@ -7768,6 +7771,7 @@ var JackdClient = class {
   use = this.createCommandHandler(
     (tube) => {
       assert(tube);
+      this.currentTube = tube;
       return new TextEncoder().encode(`use ${tube}\r
 `);
     },
@@ -8274,6 +8278,14 @@ var JackdClient = class {
     }
     if (!this.watchedTubes.has("default")) {
       await this.ignore("default");
+    }
+  }
+  /**
+   * Reuses the previously used tube after a reconnection
+   */
+  async reuseTube() {
+    if (this.currentTube !== "default") {
+      await this.use(this.currentTube);
     }
   }
   createCommandHandler(commandStringFunction, handlers) {

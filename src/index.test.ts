@@ -95,6 +95,46 @@ describe("jackd", () => {
       // Cleanup
       await client.close()
     })
+
+    it("maintains use tube state across reconnections", async () => {
+      // Create a new client with autoReconnect enabled and shorter timeout
+      const client = new Jackd({
+        autoReconnect: true,
+        initialReconnectDelay: 100 // Faster reconnect for test
+      })
+      await client.connect()
+
+      // Use a different tube
+      const testTube = "test-tube-use"
+      await client.use(testTube)
+
+      // Verify current tube
+      const currentTube = await client.listTubeUsed()
+      expect(currentTube).toBe(testTube)
+
+      // Force a disconnect by destroying the socket
+      client.socket.destroy()
+
+      // Wait a bit for reconnection
+      await new Promise(resolve => setTimeout(resolve, 500)) // Shorter wait
+
+      // Verify connection status
+      if (!client.connected) {
+        try {
+          await client.connect()
+        } catch (error) {
+          console.error("Manual connect failed:", error)
+          // Ignore connection errors as we're testing reconnect behavior
+        }
+      }
+
+      // Verify the tube is still being used after reconnection
+      const reconnectedTube = await client.listTubeUsed()
+      expect(reconnectedTube).toBe(testTube)
+
+      // Cleanup
+      await client.close()
+    })
   })
 
   describe("producers", () => {

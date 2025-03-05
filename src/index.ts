@@ -380,6 +380,7 @@ export class JackdClient {
   private isReconnecting: boolean = false
   private commandTimeout: number = 10000 // 10 second timeout for commands
   private watchedTubes: Set<string> = new Set(["default"]) // Track watched tubes, default is always watched initially
+  private currentTube: string = "default" // Track currently used tube
 
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
@@ -417,6 +418,7 @@ export class JackdClient {
       this.reconnectAttempts = 0
       this.currentReconnectDelay = this.initialReconnectDelay
       void this.rewatchTubes() // Rewatch tubes after reconnection
+      void this.reuseTube() // Reuse tube after reconnection
     })
 
     this.socket.on("close", () => {
@@ -793,6 +795,7 @@ export class JackdClient {
   use = this.createCommandHandler<JackdTubeArgs, string>(
     tube => {
       assert(tube)
+      this.currentTube = tube // Track the current tube
       return new TextEncoder().encode(`use ${tube}\r\n`)
     },
     [
@@ -1334,6 +1337,15 @@ export class JackdClient {
     // Only after watching other tubes, ignore default if it's not in our watched set
     if (!this.watchedTubes.has("default")) {
       await this.ignore("default")
+    }
+  }
+
+  /**
+   * Reuses the previously used tube after a reconnection
+   */
+  private async reuseTube() {
+    if (this.currentTube !== "default") {
+      await this.use(this.currentTube)
     }
   }
 
