@@ -7305,16 +7305,12 @@ var require_dist = __commonJS({
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
-  CommandExecution: () => CommandExecution,
   JackdClient: () => JackdClient,
-  JackdError: () => JackdError,
-  JackdErrorCode: () => JackdErrorCode,
   default: () => index_default
 });
 module.exports = __toCommonJS(index_exports);
 var import_net = require("net");
 var import_assert = __toESM(require("assert"), 1);
-var import_events = __toESM(require("events"), 1);
 var import_yaml = __toESM(require_dist(), 1);
 
 // src/camelcase.ts
@@ -7417,31 +7413,8 @@ function camelCase(input, options) {
   return postProcess(input, toUpperCase);
 }
 
-// src/index.ts
+// src/types.ts
 var DELIMITER = "\r\n";
-var CommandExecution = class {
-  /** Handlers for processing command response */
-  handlers = [];
-  /** Event emitter for command completion */
-  emitter = new import_events.default();
-};
-var JackdErrorCode = /* @__PURE__ */ ((JackdErrorCode2) => {
-  JackdErrorCode2["OUT_OF_MEMORY"] = "OUT_OF_MEMORY";
-  JackdErrorCode2["INTERNAL_ERROR"] = "INTERNAL_ERROR";
-  JackdErrorCode2["BAD_FORMAT"] = "BAD_FORMAT";
-  JackdErrorCode2["UNKNOWN_COMMAND"] = "UNKNOWN_COMMAND";
-  JackdErrorCode2["EXPECTED_CRLF"] = "EXPECTED_CRLF";
-  JackdErrorCode2["JOB_TOO_BIG"] = "JOB_TOO_BIG";
-  JackdErrorCode2["DRAINING"] = "DRAINING";
-  JackdErrorCode2["TIMED_OUT"] = "TIMED_OUT";
-  JackdErrorCode2["DEADLINE_SOON"] = "DEADLINE_SOON";
-  JackdErrorCode2["NOT_FOUND"] = "NOT_FOUND";
-  JackdErrorCode2["NOT_IGNORED"] = "NOT_IGNORED";
-  JackdErrorCode2["INVALID_RESPONSE"] = "INVALID_RESPONSE";
-  JackdErrorCode2["NOT_CONNECTED"] = "NOT_CONNECTED";
-  JackdErrorCode2["FATAL_CONNECTION_ERROR"] = "FATAL_CONNECTION_ERROR";
-  return JackdErrorCode2;
-})(JackdErrorCode || {});
 var JackdError = class extends Error {
   /** Error code indicating the type of error */
   code;
@@ -7454,10 +7427,35 @@ var JackdError = class extends Error {
     this.name = "JackdError";
   }
 };
+var RESERVED = "RESERVED";
+var INSERTED = "INSERTED";
+var USING = "USING";
+var TOUCHED = "TOUCHED";
+var DELETED = "DELETED";
+var BURIED = "BURIED";
+var RELEASED = "RELEASED";
+var NOT_FOUND = "NOT_FOUND";
+var OUT_OF_MEMORY = "OUT_OF_MEMORY";
+var INTERNAL_ERROR = "INTERNAL_ERROR";
+var BAD_FORMAT = "BAD_FORMAT";
+var UNKNOWN_COMMAND = "UNKNOWN_COMMAND";
+var EXPECTED_CRLF = "EXPECTED_CRLF";
+var JOB_TOO_BIG = "JOB_TOO_BIG";
+var DRAINING = "DRAINING";
+var TIMED_OUT = "TIMED_OUT";
+var DEADLINE_SOON = "DEADLINE_SOON";
+var FOUND = "FOUND";
+var WATCHING = "WATCHING";
+var NOT_IGNORED = "NOT_IGNORED";
+var KICKED = "KICKED";
+var PAUSED = "PAUSED";
+var OK = "OK";
+
+// src/index.ts
+var import_events = __toESM(require("events"), 1);
 var JackdClient = class {
   socket = this.createSocket();
   connected = false;
-  buffer = new Uint8Array();
   chunkLength = 0;
   host;
   port;
@@ -7471,11 +7469,10 @@ var JackdClient = class {
   isReconnecting = false;
   watchedTubes = /* @__PURE__ */ new Set(["default"]);
   currentTube = "default";
-  // beanstalkd executes all commands serially. Because Node.js is single-threaded,
-  // this allows us to queue up all of the messages and commands as they're invokved
-  // without needing to explicitly wait for promises.
-  messages = [];
   executions = [];
+  buffer = new Uint8Array();
+  commandBuffer = new Uint8Array();
+  isProcessing = false;
   constructor({
     autoconnect = true,
     host = "localhost",
@@ -7497,35 +7494,11 @@ var JackdClient = class {
     }
   }
   createSocket() {
-    const socket = new import_net.Socket();
-    socket.setKeepAlive(true);
-    this.socket = socket;
-    this.setupSocketListeners();
-    return socket;
-  }
-  handleDisconnect() {
-    this.connected = false;
-    while (this.executions.length > 0) {
-      const execution = this.executions.shift();
-      if (execution) {
-        execution.emitter.emit(
-          "reject",
-          new JackdError("NOT_CONNECTED" /* NOT_CONNECTED */, "Connection lost")
-        );
-      }
-    }
-    this.messages = [];
-    this.buffer = new Uint8Array();
-    this.chunkLength = 0;
-    if (this.autoReconnect && !this.isReconnecting) {
-      void this.attemptReconnect();
-    }
-  }
-  setupSocketListeners() {
+    this.socket = new import_net.Socket();
+    this.socket.setKeepAlive(true);
     this.socket.on("ready", () => {
       this.connected = true;
-      this.reconnectAttempts = 0;
-      this.currentReconnectDelay = this.initialReconnectDelay;
+      void this.processNextCommand();
     });
     this.socket.on("close", () => {
       if (this.connected) this.handleDisconnect();
@@ -7542,8 +7515,15 @@ var JackdClient = class {
       newBuffer.set(this.buffer);
       newBuffer.set(new Uint8Array(incoming), this.buffer.length);
       this.buffer = newBuffer;
-      void this.processChunk(this.buffer);
+      void this.processNextCommand();
     });
+    return this.socket;
+  }
+  handleDisconnect() {
+    this.connected = false;
+    if (this.autoReconnect && !this.isReconnecting) {
+      void this.attemptReconnect();
+    }
   }
   attemptReconnect() {
     if (this.maxReconnectAttempts > 0 && this.reconnectAttempts >= this.maxReconnectAttempts) {
@@ -7558,8 +7538,6 @@ var JackdClient = class {
     this.reconnectTimeout = setTimeout(() => {
       void (async () => {
         try {
-          this.socket.removeAllListeners();
-          this.socket = this.createSocket();
           await this.connect();
           this.isReconnecting = false;
         } catch (error) {
@@ -7573,52 +7551,6 @@ var JackdClient = class {
         }
       })();
     }, this.currentReconnectDelay);
-  }
-  async processChunk(head) {
-    let index = -1;
-    if (this.chunkLength > 0) {
-      const remainingBytes = this.chunkLength - head.length;
-      if (remainingBytes > -DELIMITER.length) {
-        return;
-      }
-      index = head.length - DELIMITER.length;
-      this.chunkLength = 0;
-    } else {
-      const delimiterBytes = new TextEncoder().encode(DELIMITER);
-      index = findIndex(head, delimiterBytes);
-    }
-    if (index > -1) {
-      this.messages.push(head.slice(0, index));
-      await this.flushExecutions();
-      const tail = head.slice(index + DELIMITER.length);
-      this.buffer = tail;
-      await this.processChunk(tail);
-    }
-  }
-  async flushExecutions() {
-    for (let i = 0; i < this.executions.length; i++) {
-      if (this.messages.length === 0) {
-        return;
-      }
-      const execution = this.executions[0];
-      const { handlers, emitter } = execution;
-      try {
-        while (handlers.length && this.messages.length) {
-          const handler = handlers.shift();
-          const result = await handler(this.messages.shift());
-          if (handlers.length === 0) {
-            emitter.emit("resolve", result);
-            this.executions.shift();
-            i--;
-            break;
-          }
-        }
-      } catch (err) {
-        emitter.emit("reject", err);
-        this.executions.shift();
-        i--;
-      }
-    }
   }
   /**
    * For environments where network partitioning is common.
@@ -7663,23 +7595,99 @@ var JackdClient = class {
       await this.use(this.currentTube);
     }
   }
+  quit = async () => {
+    if (!this.connected) return;
+    const waitForClose = new Promise((resolve, reject) => {
+      this.socket.once("end", resolve);
+      this.socket.once("close", resolve);
+      this.socket.once("error", reject);
+    });
+    await this.write(new TextEncoder().encode("quit\r\n"));
+    this.socket.destroy();
+    await waitForClose;
+  };
+  close = this.quit;
+  disconnect = this.quit;
+  createCommandHandler(commandStringFunction, handlers) {
+    return async (...args) => {
+      const commandString = commandStringFunction.apply(this, args);
+      const emitter = new import_events.default();
+      this.executions.push({
+        command: commandString,
+        handlers: handlers.concat(),
+        emitter,
+        written: false
+      });
+      void this.processNextCommand();
+      return new Promise((resolve, reject) => {
+        emitter.once("resolve", resolve);
+        emitter.once("reject", reject);
+      });
+    };
+  }
+  async processNextCommand() {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+    try {
+      if (!this.connected) return;
+      while (this.executions.length > 0) {
+        const execution = this.executions[0];
+        if (!execution.written) {
+          await this.write(execution.command);
+          execution.written = true;
+        }
+        const delimiter = new TextEncoder().encode(DELIMITER);
+        const { handlers, emitter } = execution;
+        try {
+          while (handlers.length) {
+            const handler = handlers[0];
+            while (true) {
+              const index = this.chunkLength ? this.chunkLength : findIndex(this.buffer, delimiter);
+              if (this.chunkLength && this.buffer.length >= this.chunkLength) {
+                this.commandBuffer = this.buffer.slice(0, this.chunkLength);
+                this.buffer = this.buffer.slice(
+                  this.chunkLength + delimiter.length
+                );
+                this.chunkLength = 0;
+                break;
+              } else if (this.chunkLength === 0 && index > -1) {
+                this.commandBuffer = this.buffer.slice(0, index);
+                this.buffer = this.buffer.slice(index + delimiter.length);
+                break;
+              }
+              return;
+            }
+            const result = await handler(
+              this.commandBuffer,
+              execution.command.slice(
+                0,
+                execution.command.length - DELIMITER.length
+              )
+            );
+            this.commandBuffer = new Uint8Array();
+            handlers.shift();
+            if (handlers.length === 0) {
+              emitter.emit("resolve", result);
+              this.executions.shift();
+            }
+          }
+        } catch (err) {
+          emitter.emit("reject", err);
+          this.executions.shift();
+        }
+      }
+    } catch (error) {
+      console.error("Error processing command:", error);
+    } finally {
+      this.isProcessing = false;
+    }
+  }
   write(buffer) {
     (0, import_assert.default)(buffer);
     return new Promise((resolve, reject) => {
       this.socket.write(buffer, (err) => err ? reject(err) : resolve());
     });
   }
-  quit = async () => {
-    if (!this.connected) return;
-    const waitForClose = new Promise((resolve, reject) => {
-      this.socket.once("close", resolve);
-      this.socket.once("error", reject);
-    });
-    this.socket.end(new TextEncoder().encode("quit\r\n"));
-    await waitForClose;
-  };
-  close = this.quit;
-  disconnect = this.quit;
   /**
    * Puts a job into the currently used tube
    * @param payload Job data - will be JSON stringified if object
@@ -7745,6 +7753,7 @@ var JackdClient = class {
         const ascii = validate(buffer);
         if (ascii.startsWith(USING)) {
           const [, tube] = ascii.split(" ");
+          this.currentTube = tube;
           return tube;
         }
         invalidResponse(ascii);
@@ -7912,9 +7921,11 @@ var JackdClient = class {
 `);
     },
     [
-      (buffer) => {
+      (buffer, command) => {
         const ascii = validate(buffer);
         if (ascii.startsWith(WATCHING)) {
+          const tube = new TextDecoder().decode(command).split(" ")[1];
+          this.watchedTubes.add(tube);
           const [, count] = ascii.split(" ");
           return parseInt(count);
         }
@@ -7935,9 +7946,11 @@ var JackdClient = class {
 `);
     },
     [
-      (buffer) => {
+      (buffer, command) => {
         const ascii = validate(buffer, [NOT_IGNORED]);
         if (ascii.startsWith(WATCHING)) {
+          const tube = new TextDecoder().decode(command).split(" ")[1];
+          this.watchedTubes.delete(tube);
           const [, count] = ascii.split(" ");
           return parseInt(count);
         }
@@ -8229,21 +8242,6 @@ var JackdClient = class {
       }
     ]
   );
-  createCommandHandler(commandStringFunction, handlers) {
-    return async (...args) => {
-      const commandString = commandStringFunction.apply(this, args);
-      await this.write(commandString);
-      const emitter = new import_events.default();
-      this.executions.push({
-        handlers: handlers.concat(),
-        emitter
-      });
-      return await new Promise((resolve, reject) => {
-        emitter.once("resolve", resolve);
-        emitter.once("reject", reject);
-      });
-    };
-  }
 };
 var index_default = JackdClient;
 function validate(buffer, additionalResponses = []) {
@@ -8273,33 +8271,7 @@ function findIndex(array, subarray) {
   }
   return -1;
 }
-var RESERVED = "RESERVED";
-var INSERTED = "INSERTED";
-var USING = "USING";
-var TOUCHED = "TOUCHED";
-var DELETED = "DELETED";
-var BURIED = "BURIED";
-var RELEASED = "RELEASED";
-var NOT_FOUND = "NOT_FOUND";
-var OUT_OF_MEMORY = "OUT_OF_MEMORY";
-var INTERNAL_ERROR = "INTERNAL_ERROR";
-var BAD_FORMAT = "BAD_FORMAT";
-var UNKNOWN_COMMAND = "UNKNOWN_COMMAND";
-var EXPECTED_CRLF = "EXPECTED_CRLF";
-var JOB_TOO_BIG = "JOB_TOO_BIG";
-var DRAINING = "DRAINING";
-var TIMED_OUT = "TIMED_OUT";
-var DEADLINE_SOON = "DEADLINE_SOON";
-var FOUND = "FOUND";
-var WATCHING = "WATCHING";
-var NOT_IGNORED = "NOT_IGNORED";
-var KICKED = "KICKED";
-var PAUSED = "PAUSED";
-var OK = "OK";
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  CommandExecution,
-  JackdClient,
-  JackdError,
-  JackdErrorCode
+  JackdClient
 });

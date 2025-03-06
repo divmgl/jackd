@@ -1,6 +1,7 @@
-import Jackd, { JackdError, JackdErrorCode } from "./index"
+import Jackd from "./index"
 import crypto from "crypto"
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { JackdErrorCode, JackdError } from "./types"
 
 describe("jackd", () => {
   let client: Jackd
@@ -22,8 +23,10 @@ describe("jackd", () => {
       await client.disconnect()
       expect(client.connected).toBeFalsy()
     })
+  })
 
-    it.skip("queues commands when not connected and executes them on connect", async () => {
+  describe("reconnection", () => {
+    it("queues commands when not connected and executes them on connect", async () => {
       const client = new Jackd({ autoconnect: false })
       expect(client.connected).toBeFalsy()
 
@@ -42,12 +45,14 @@ describe("jackd", () => {
       await client.close()
     })
 
-    it.skip("maintains tube watching state across reconnections", async () => {
+    it("maintains tube watching state across reconnections", async () => {
       // Create a new client with autoReconnect enabled and shorter timeout
       const client = new Jackd({
+        autoconnect: false,
         autoReconnect: true,
         initialReconnectDelay: 100 // Faster reconnect for test
       })
+
       await client.connect()
 
       // Watch new tubes before ignoring default
@@ -77,28 +82,20 @@ describe("jackd", () => {
       // Wait a bit for reconnection
       await new Promise(resolve => setTimeout(resolve, 500)) // Shorter wait
 
-      // Verify connection status
-      if (!client.connected) {
-        try {
-          await client.connect()
-        } catch (error) {
-          console.error("Manual connect failed:", error)
-          // Ignore connection errors as we're testing reconnect behavior
-        }
-      }
-
-      // Verify the internal state after reconnection
-      // @ts-expect-error: testing private property
-      const reconnectedInternalWatchedTubes = Array.from(client.watchedTubes)
-      expect(reconnectedInternalWatchedTubes).toEqual(internalWatchedTubes)
+      const watchedTubes = await client.listTubesWatched()
+      expect(watchedTubes).toContain("tube1")
+      expect(watchedTubes).toContain("tube2")
+      expect(watchedTubes).not.toContain("default")
+      expect(watchedTubes.length).toBe(2)
 
       // Cleanup
       await client.close()
     })
 
-    it.skip("maintains use tube state across reconnections", async () => {
+    it("maintains use tube state across reconnections", async () => {
       // Create a new client with autoReconnect enabled and shorter timeout
       const client = new Jackd({
+        autoconnect: false,
         autoReconnect: true,
         initialReconnectDelay: 100 // Faster reconnect for test
       })
@@ -117,16 +114,6 @@ describe("jackd", () => {
 
       // Wait a bit for reconnection
       await new Promise(resolve => setTimeout(resolve, 500)) // Shorter wait
-
-      // Verify connection status
-      if (!client.connected) {
-        try {
-          await client.connect()
-        } catch (error) {
-          console.error("Manual connect failed:", error)
-          // Ignore connection errors as we're testing reconnect behavior
-        }
-      }
 
       // Verify the tube is still being used after reconnection
       const reconnectedTube = await client.listTubeUsed()
