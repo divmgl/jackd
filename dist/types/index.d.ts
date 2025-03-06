@@ -232,3 +232,4 @@ export declare class JackdClient {
     listTubeUsed: () => Promise<string>;
 }
 export default JackdClient;
+export { JackdError, JackdErrorCode } from "./types";

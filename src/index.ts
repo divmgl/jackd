@@ -115,7 +115,7 @@ export class JackdClient {
 
   private createSocket() {
     this.socket = new Socket()
-    this.socket.setKeepAlive(true)
+    this.socket.setKeepAlive(true, 30_000)
 
     this.socket.on("ready", () => {
       this.connected = true
@@ -1012,3 +1012,5 @@ function findIndex(array: Uint8Array, subarray: Uint8Array): number {
   }
   return -1
 }
+
+export { JackdError, JackdErrorCode } from "./types"

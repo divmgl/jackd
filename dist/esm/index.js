@@ -7409,6 +7409,23 @@ function camelCase(input, options) {
 
 // src/types.ts
 var DELIMITER = "\r\n";
+var JackdErrorCode = /* @__PURE__ */ ((JackdErrorCode2) => {
+  JackdErrorCode2["OUT_OF_MEMORY"] = "OUT_OF_MEMORY";
+  JackdErrorCode2["INTERNAL_ERROR"] = "INTERNAL_ERROR";
+  JackdErrorCode2["BAD_FORMAT"] = "BAD_FORMAT";
+  JackdErrorCode2["UNKNOWN_COMMAND"] = "UNKNOWN_COMMAND";
+  JackdErrorCode2["EXPECTED_CRLF"] = "EXPECTED_CRLF";
+  JackdErrorCode2["JOB_TOO_BIG"] = "JOB_TOO_BIG";
+  JackdErrorCode2["DRAINING"] = "DRAINING";
+  JackdErrorCode2["TIMED_OUT"] = "TIMED_OUT";
+  JackdErrorCode2["DEADLINE_SOON"] = "DEADLINE_SOON";
+  JackdErrorCode2["NOT_FOUND"] = "NOT_FOUND";
+  JackdErrorCode2["NOT_IGNORED"] = "NOT_IGNORED";
+  JackdErrorCode2["INVALID_RESPONSE"] = "INVALID_RESPONSE";
+  JackdErrorCode2["NOT_CONNECTED"] = "NOT_CONNECTED";
+  JackdErrorCode2["FATAL_CONNECTION_ERROR"] = "FATAL_CONNECTION_ERROR";
+  return JackdErrorCode2;
+})(JackdErrorCode || {});
 var JackdError = class extends Error {
   /** Error code indicating the type of error */
   code;
@@ -7489,7 +7506,7 @@ var JackdClient = class {
   }
   createSocket() {
     this.socket = new Socket();
-    this.socket.setKeepAlive(true);
+    this.socket.setKeepAlive(true, 3e4);
     this.socket.on("ready", () => {
       this.connected = true;
       void this.processNextCommand();
@@ -8267,5 +8284,7 @@ function findIndex(array, subarray) {
 }
 export {
   JackdClient,
+  JackdError,
+  JackdErrorCode,
   index_default as default
 };
