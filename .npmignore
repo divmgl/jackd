@@ -6,3 +6,4 @@ audit
 tmp
 .github
 node_modules
+bun.lock

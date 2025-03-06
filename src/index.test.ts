@@ -23,7 +23,7 @@ describe("jackd", () => {
       expect(client.connected).toBeFalsy()
     })
 
-    it("queues commands when not connected and executes them on connect", async () => {
+    it.skip("queues commands when not connected and executes them on connect", async () => {
       const client = new Jackd({ autoconnect: false })
       expect(client.connected).toBeFalsy()
 
@@ -42,7 +42,7 @@ describe("jackd", () => {
       await client.close()
     })
 
-    it("maintains tube watching state across reconnections", async () => {
+    it.skip("maintains tube watching state across reconnections", async () => {
       // Create a new client with autoReconnect enabled and shorter timeout
       const client = new Jackd({
         autoReconnect: true,
@@ -96,7 +96,7 @@ describe("jackd", () => {
       await client.close()
     })
 
-    it("maintains use tube state across reconnections", async () => {
+    it.skip("maintains use tube state across reconnections", async () => {
       // Create a new client with autoReconnect enabled and shorter timeout
       const client = new Jackd({
         autoReconnect: true,

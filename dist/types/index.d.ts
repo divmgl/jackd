@@ -335,14 +335,14 @@ export declare class JackdClient {
     private currentReconnectDelay;
     private reconnectTimeout?;
     private isReconnecting;
-    private commandTimeout;
     private watchedTubes;
     private currentTube;
     messages: Uint8Array[];
     executions: CommandExecution<unknown>[];
     constructor({ autoconnect, host, port, autoReconnect, initialReconnectDelay, maxReconnectDelay, maxReconnectAttempts }?: JackdProps);
-    private setupSocketListeners;
+    private createSocket;
     private handleDisconnect;
+    private setupSocketListeners;
     private attemptReconnect;
     processChunk(head: Uint8Array): Promise<void>;
     flushExecutions(): Promise<void>;
@@ -352,8 +352,16 @@ export declare class JackdClient {
      */
     isConnected(): boolean;
     connect(): Promise<this>;
+    /**
+     * Rewatches all previously watched tubes after a reconnection
+     * If default is not in the watched tubes list, ignores it
+     */
+    private rewatchTubes;
+    /**
+     * Reuses the previously used tube after a reconnection
+     */
+    private reuseTube;
     write(buffer: Uint8Array): Promise<void>;
-    private handleFatalError;
     quit: () => Promise<void>;
     close: () => Promise<void>;
     disconnect: () => Promise<void>;
@@ -523,15 +531,6 @@ export declare class JackdClient {
      * @returns Name of tube being used
      */
     listTubeUsed: () => Promise<string>;
-    /**
-     * Rewatches all previously watched tubes after a reconnection
-     * If default is not in the watched tubes list, ignores it
-     */
-    private rewatchTubes;
-    /**
-     * Reuses the previously used tube after a reconnection
-     */
-    private reuseTube;
     createCommandHandler<TArgs extends JackdArgs, TReturn>(commandStringFunction: (...args: TArgs) => Uint8Array, handlers: CommandHandler<TReturn | void>[]): (...args: TArgs) => Promise<TReturn>;
 }
 export default JackdClient;

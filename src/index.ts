@@ -360,11 +360,7 @@ export class JackdError extends Error {
  * ```
  */
 export class JackdClient {
-  public socket: Socket = (() => {
-    const socket = new Socket()
-    socket.setKeepAlive(true)
-    return socket
-  })()
+  public socket: Socket = this.createSocket()
   public connected: boolean = false
   private buffer: Uint8Array = new Uint8Array()
   private chunkLength: number = 0
@@ -378,9 +374,8 @@ export class JackdClient {
   private currentReconnectDelay: number
   private reconnectTimeout?: ReturnType<typeof setTimeout>
   private isReconnecting: boolean = false
-  private commandTimeout: number = 10000 // 10 second timeout for commands
-  private watchedTubes: Set<string> = new Set(["default"]) // Track watched tubes, default is always watched initially
-  private currentTube: string = "default" // Track currently used tube
+  private watchedTubes: Set<string> = new Set(["default"])
+  private currentTube: string = "default"
 
   // beanstalkd executes all commands serially. Because Node.js is single-threaded,
   // this allows us to queue up all of the messages and commands as they're invokved
@@ -405,54 +400,20 @@ export class JackdClient {
     this.maxReconnectAttempts = maxReconnectAttempts
     this.currentReconnectDelay = initialReconnectDelay
 
-    this.setupSocketListeners()
-
     if (autoconnect) {
       void this.connect()
     }
   }
 
-  private setupSocketListeners() {
-    this.socket.on("ready", () => {
-      this.connected = true
-      this.reconnectAttempts = 0
-      this.currentReconnectDelay = this.initialReconnectDelay
-      void this.rewatchTubes() // Rewatch tubes after reconnection
-      void this.reuseTube() // Reuse tube after reconnection
-    })
+  private createSocket() {
+    const socket = new Socket()
+    socket.setKeepAlive(true)
 
-    this.socket.on("close", () => {
-      if (this.connected) {
-        // Only handle disconnection if we were previously connected
-        this.handleDisconnect()
-      }
-    })
+    this.socket = socket
 
-    this.socket.on("end", () => {
-      // Remote peer closed the connection
-      if (this.connected) {
-        this.handleDisconnect()
-      }
-    })
+    this.setupSocketListeners()
 
-    this.socket.on("error", (error: Error) => {
-      console.error("Socket error:", error.message)
-
-      if (this.connected) {
-        this.handleDisconnect()
-      }
-    })
-
-    // When we receive data from the socket, let's process it and put it in our
-    // messages.
-    this.socket.on("data", incoming => {
-      // Write the incoming data onto the buffer
-      const newBuffer = new Uint8Array(this.buffer.length + incoming.length)
-      newBuffer.set(this.buffer)
-      newBuffer.set(new Uint8Array(incoming), this.buffer.length)
-      this.buffer = newBuffer
-      void this.processChunk(this.buffer)
-    })
+    return socket
   }
 
   private handleDisconnect() {
@@ -479,11 +440,44 @@ export class JackdClient {
     }
   }
 
+  private setupSocketListeners() {
+    this.socket.on("ready", () => {
+      this.connected = true
+      this.reconnectAttempts = 0
+      this.currentReconnectDelay = this.initialReconnectDelay
+    })
+
+    this.socket.on("close", () => {
+      if (this.connected) this.handleDisconnect()
+    })
+
+    this.socket.on("end", () => {
+      if (this.connected) this.handleDisconnect()
+    })
+
+    this.socket.on("error", (error: Error) => {
+      console.error("Socket error:", error.message)
+      if (this.connected) this.handleDisconnect()
+    })
+
+    // When we receive data from the socket, let's process it and put it in our
+    // messages.
+    this.socket.on("data", incoming => {
+      // Write the incoming data onto the buffer
+      const newBuffer = new Uint8Array(this.buffer.length + incoming.length)
+      newBuffer.set(this.buffer)
+      newBuffer.set(new Uint8Array(incoming), this.buffer.length)
+      this.buffer = newBuffer
+      void this.processChunk(this.buffer)
+    })
+  }
+
   private attemptReconnect() {
     if (
       this.maxReconnectAttempts > 0 &&
       this.reconnectAttempts >= this.maxReconnectAttempts
     ) {
+      console.error("Max reconnection attempts reached")
       return
     }
 
@@ -499,20 +493,9 @@ export class JackdClient {
     this.reconnectTimeout = setTimeout(() => {
       void (async () => {
         try {
-          // Clean up existing socket
-          this.socket.removeAllListeners()
-          this.socket.destroy()
-
           // Create a new socket instance
-          this.socket = new Socket()
-          this.socket.setKeepAlive(true)
-
-          // Reset connection-related state
-          this.buffer = new Uint8Array()
-          this.chunkLength = 0
-
-          // Set up socket listeners before connecting
-          this.setupSocketListeners()
+          this.socket.removeAllListeners()
+          this.socket = this.createSocket()
 
           await this.connect()
           this.isReconnecting = false
@@ -587,9 +570,8 @@ export class JackdClient {
         // data chunks after the initial response.
         while (handlers.length && this.messages.length) {
           const handler = handlers.shift()
-          const message = this.messages.shift()!
 
-          const result = await handler!(message)
+          const result = await handler!(this.messages.shift()!)
 
           if (handlers.length === 0) {
             emitter.emit("resolve", result)
@@ -621,99 +603,55 @@ export class JackdClient {
 
   async connect(): Promise<this> {
     await new Promise<void>((resolve, reject) => {
-      // Add a timeout to prevent hanging
-      const timeoutId = setTimeout(() => {
-        this.socket.removeListener("error", onError)
-        reject(new Error("Connection timeout"))
-      }, this.commandTimeout)
-
-      const onError = (error: NodeJS.ErrnoException) => {
-        clearTimeout(timeoutId)
+      this.socket.once("error", (error: NodeJS.ErrnoException) => {
         if (error.code === "EISCONN") {
           return resolve()
         }
         reject(error)
-      }
-
-      this.socket.once("error", onError)
-
-      // Use once('ready') as an alternative way to detect successful connection
-      this.socket.once("ready", () => {
-        clearTimeout(timeoutId)
-        resolve()
       })
 
-      this.socket.connect(this.port, this.host, () => {
-        clearTimeout(timeoutId)
-        resolve()
-      })
+      this.socket.connect(this.port, this.host, resolve)
     })
 
+    await this.rewatchTubes()
+    await this.reuseTube()
+
     return this
+  }
+
+  /**
+   * Rewatches all previously watched tubes after a reconnection
+   * If default is not in the watched tubes list, ignores it
+   */
+  private async rewatchTubes() {
+    // Watch all tubes in our set (except default) first
+    for (const tube of this.watchedTubes) {
+      if (tube !== "default") {
+        await this.watch(tube)
+      }
+    }
+
+    // Only after watching other tubes, ignore default if it's not in our watched set
+    if (!this.watchedTubes.has("default")) {
+      await this.ignore("default")
+    }
+  }
+
+  /**
+   * Reuses the previously used tube after a reconnection
+   */
+  private async reuseTube() {
+    if (this.currentTube !== "default") {
+      await this.use(this.currentTube)
+    }
   }
 
   write(buffer: Uint8Array) {
     assert(buffer)
 
     return new Promise<void>((resolve, reject) => {
-      const tryWrite = () => {
-        if (this.connected) {
-          this.socket.write(buffer, err => (err ? reject(err) : resolve()))
-          return
-        }
-
-        // If not connected and not already reconnecting, trigger reconnect
-        if (!this.isReconnecting && this.autoReconnect) {
-          void this.attemptReconnect()
-        }
-
-        // Set a timeout for the command
-        const timeoutId = setTimeout(() => {
-          const error = new JackdError(
-            JackdErrorCode.FATAL_CONNECTION_ERROR,
-            "Connection timeout - could not establish connection within timeout period"
-          )
-          error.stack = new Error().stack // Preserve the call stack
-          reject(error)
-
-          // Force all other commands to fail
-          this.handleFatalError(error)
-        }, this.commandTimeout)
-
-        // Wait for connection or timeout
-        this.socket.once("ready", () => {
-          clearTimeout(timeoutId)
-          this.socket.write(buffer, err => (err ? reject(err) : resolve()))
-        })
-      }
-
-      void tryWrite()
+      this.socket.write(buffer, err => (err ? reject(err) : resolve()))
     })
-  }
-
-  private handleFatalError(error: JackdError) {
-    // Reject all pending executions
-    while (this.executions.length > 0) {
-      const execution = this.executions.shift()
-      if (execution) {
-        execution.emitter.emit("reject", error)
-      }
-    }
-
-    // Clear state
-    this.messages = []
-    this.buffer = new Uint8Array()
-    this.chunkLength = 0
-    this.connected = false
-    this.autoReconnect = false // Disable reconnection attempts
-
-    // Destroy the socket
-    this.socket.destroy()
-
-    // Throw the error asynchronously to crash the process
-    setTimeout(() => {
-      throw error
-    }, 0)
   }
 
   quit = async () => {
@@ -795,7 +733,6 @@ export class JackdClient {
   use = this.createCommandHandler<JackdTubeArgs, string>(
     tube => {
       assert(tube)
-      this.currentTube = tube // Track the current tube
       return new TextEncoder().encode(`use ${tube}\r\n`)
     },
     [
@@ -977,13 +914,12 @@ export class JackdClient {
    * @returns Number of tubes now being watched
    */
   watch = this.createCommandHandler<JackdTubeArgs, number>(
-    (tube: string) => {
+    tube => {
       assert(tube)
-      this.watchedTubes.add(tube) // Add tube to watched set when command is created
       return new TextEncoder().encode(`watch ${tube}\r\n`)
     },
     [
-      (buffer: Uint8Array) => {
+      buffer => {
         const ascii = validate(buffer)
 
         if (ascii.startsWith(WATCHING)) {
@@ -1003,13 +939,12 @@ export class JackdClient {
    * @throws {Error} NOT_IGNORED if trying to ignore only watched tube
    */
   ignore = this.createCommandHandler<JackdTubeArgs, number>(
-    (tube: string) => {
+    tube => {
       assert(tube)
-      this.watchedTubes.delete(tube) // Remove tube from watched set when command is created
       return new TextEncoder().encode(`ignore ${tube}\r\n`)
     },
     [
-      (buffer: Uint8Array) => {
+      buffer => {
         const ascii = validate(buffer, [NOT_IGNORED])
 
         if (ascii.startsWith(WATCHING)) {
@@ -1322,33 +1257,6 @@ export class JackdClient {
     ]
   )
 
-  /**
-   * Rewatches all previously watched tubes after a reconnection
-   * If default is not in the watched tubes list, ignores it
-   */
-  private async rewatchTubes() {
-    // Watch all tubes in our set (except default) first
-    for (const tube of this.watchedTubes) {
-      if (tube !== "default") {
-        await this.watch(tube)
-      }
-    }
-
-    // Only after watching other tubes, ignore default if it's not in our watched set
-    if (!this.watchedTubes.has("default")) {
-      await this.ignore("default")
-    }
-  }
-
-  /**
-   * Reuses the previously used tube after a reconnection
-   */
-  private async reuseTube() {
-    if (this.currentTube !== "default") {
-      await this.use(this.currentTube)
-    }
-  }
-
   createCommandHandler<TArgs extends JackdArgs, TReturn>(
     commandStringFunction: (...args: TArgs) => Uint8Array,
     handlers: CommandHandler<TReturn | void>[]
@@ -1384,9 +1292,8 @@ function validate(
   const errorCode = errors
     .concat(additionalResponses)
     .find(error => ascii.startsWith(error))
-  if (errorCode) {
-    throw new JackdError(errorCode as JackdErrorCode, ascii, ascii)
-  }
+
+  if (errorCode) throw new JackdError(errorCode as JackdErrorCode, ascii, ascii)
 
   return ascii
 }
